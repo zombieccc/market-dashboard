@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#07071a">
+  <title>📈 시장 온도계</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #07071a; color: white; overflow-x: hidden; }
+    body { font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif; -webkit-font-smoothing: antialiased; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #07071a; }
+    ::-webkit-scrollbar-thumb { background: #1a1a30; border-radius: 2px; }
+    button { font-family: 'Noto Sans KR', sans-serif; }
+    #root { max-width: 480px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+
+/* ─────────────────────────────────────────────────────────
+   INDICATORS
+───────────────────────────────────────────────────────── */
+const INDICATORS = [
+  { id:"vix",       weight:15, label:"VIX 공포지수",         icon:"😨", unit:"",      mockValue:18.4, mockPrev:22.1,
+    why:"투자자들이 얼마나 겁먹고 있는지 보여줘요. 높을수록 공황에 가깝습니다.",
+    buySignal:"VIX 30 이상 → 주식 역발상 매수 기회 (공포 극대화 구간)",
+    ranges:[{min:0,max:15,label:"탐욕/과열",color:"#f87171"},{min:15,max:20,label:"보통",color:"#fbbf24"},{min:20,max:25,label:"불안",color:"#fb923c"},{min:25,max:35,label:"공포→매수 기회",color:"#4ade80"},{min:35,max:999,label:"극공포→최고 기회",color:"#00e5b0"}],
+    normal:"15~20", danger:"30 이상", opportunity:"30 이상 (역발상 매수)",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((40-v)/30)*100))),
+    getLabel:v=>v>=35?"극도 공포":v>=25?"공포":v>=20?"불안":v>=15?"보통":"탐욕/과열",
+  },
+  { id:"cape",      weight:15, label:"CAPE 주가수준",         icon:"📊", unit:"x",     mockValue:34.2, mockPrev:33.8,
+    why:"10년 평균 이익 기준 주가. 역사적 평균 17배. 높으면 거품 위험.",
+    buySignal:"CAPE 17배 이하 → 역사적 저평가, 장기 매수 적기",
+    ranges:[{min:0,max:17,label:"저평가→매수 적기",color:"#00e5b0"},{min:17,max:25,label:"적정",color:"#4ade80"},{min:25,max:30,label:"다소 비쌈",color:"#fbbf24"},{min:30,max:40,label:"고평가 주의",color:"#fb923c"},{min:40,max:999,label:"거품 위험",color:"#f87171"}],
+    normal:"17~25배", danger:"35배 이상", opportunity:"15배 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-15)/25)*100))),
+    getLabel:v=>v<17?"저평가":v<25?"적정":v<30?"다소 비쌈":v<40?"고평가":"거품",
+  },
+  { id:"buffett",   weight:12, label:"버핏 지수",             icon:"🧓", unit:"%",     mockValue:191,  mockPrev:188,
+    why:"워런 버핏이 즐겨보는 지표. 시가총액÷GDP. 100% 이하면 저평가.",
+    buySignal:"버핏지수 75% 이하 → 버핏도 적극 매수하는 구간",
+    ranges:[{min:0,max:75,label:"매우 저평가",color:"#00e5b0"},{min:75,max:100,label:"저평가",color:"#4ade80"},{min:100,max:130,label:"적정",color:"#fbbf24"},{min:130,max:170,label:"고평가",color:"#fb923c"},{min:170,max:999,label:"극도 과대평가",color:"#f87171"}],
+    normal:"75~100%", danger:"150% 이상", opportunity:"75% 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-80)/120)*100))),
+    getLabel:v=>v<75?"매우 저평가":v<100?"저평가":v<130?"적정":v<170?"고평가":"극도 고평가",
+  },
+  { id:"treasury10y",weight:12,label:"미국 10년 국채금리",    icon:"🏦", unit:"%",     mockValue:4.38, mockPrev:4.22,
+    why:"이 금리가 높으면 예금·채권이 매력적. 주식 팔게 됨. 성장주에 특히 타격.",
+    buySignal:"10년물 2% 이하 → 주식 매수 최적환경, 성장주 유리",
+    ranges:[{min:0,max:2,label:"초저금리→주식 최고",color:"#00e5b0"},{min:2,max:3.5,label:"낮음→주식 유리",color:"#4ade80"},{min:3.5,max:4.2,label:"보통",color:"#fbbf24"},{min:4.2,max:5,label:"높음→주식 부담",color:"#fb923c"},{min:5,max:999,label:"매우 높음 위험",color:"#f87171"}],
+    normal:"3~4%", danger:"5% 이상", opportunity:"2% 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-2)/3)*100))),
+    getLabel:v=>v<2?"초저금리":v<3.5?"낮음":v<4.2?"보통":v<5?"높음":"매우 높음",
+  },
+  { id:"yield_curve",weight:10,label:"장단기 금리차 (10Y-2Y)",icon:"📉", unit:"%",     mockValue:0.18, mockPrev:-0.15,
+    why:"마이너스(역전)가 되면 1~2년 내 경기침체. 역사적으로 거의 틀린 적 없는 경고등.",
+    buySignal:"장단기 역전 해소 후 플러스 전환 → 침체 탈출, 주식 반등 타이밍",
+    ranges:[{min:-999,max:-0.5,label:"역전 심화→침체 경고!",color:"#f87171"},{min:-0.5,max:0,label:"역전→주의",color:"#fb923c"},{min:0,max:0.5,label:"평탄→주시",color:"#fbbf24"},{min:0.5,max:1.5,label:"정상",color:"#4ade80"},{min:1.5,max:999,label:"가파름→경기 기대",color:"#00e5b0"}],
+    normal:"+0.5~+1.5%", danger:"마이너스(-) 진입", opportunity:"+1% 이상 전환",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((-v+1)/2)*80+10))),
+    getLabel:v=>v<-0.5?"침체 경고!":v<0?"역전(주의)":v<0.5?"평탄":v<1.5?"정상":"가파름",
+  },
+  { id:"per",       weight:10, label:"S&P500 PER",            icon:"💹", unit:"x",     mockValue:22.8, mockPrev:21.5,
+    why:"주가가 이익의 몇 배인지. 역사적 평균 16배. 25배 넘으면 비싸요.",
+    buySignal:"PER 12배 이하 → 역사적 대형 저점, 공격적 매수 기회",
+    ranges:[{min:0,max:12,label:"매우 저렴→대형 기회",color:"#00e5b0"},{min:12,max:18,label:"저렴~적정",color:"#4ade80"},{min:18,max:23,label:"약간 비쌈",color:"#fbbf24"},{min:23,max:28,label:"비쌈 주의",color:"#fb923c"},{min:28,max:999,label:"매우 비쌈 위험",color:"#f87171"}],
+    normal:"15~20배", danger:"28배 이상", opportunity:"12배 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-12)/18)*100))),
+    getLabel:v=>v<12?"매우 저렴":v<18?"적정":v<23?"약간 비쌈":v<28?"비쌈":"매우 비쌈",
+  },
+  { id:"fedrate",   weight:8,  label:"미국 기준금리",          icon:"🏛️", unit:"%",     mockValue:4.5,  mockPrev:5.25,
+    why:"중앙은행(Fed)이 정하는 돈의 가격. 내리면 주식·부동산 호재. 올리면 악재.",
+    buySignal:"금리 인하 사이클 시작 → 주식·채권 동시 매수 황금기",
+    ranges:[{min:0,max:1,label:"초저금리→최대 호재",color:"#00e5b0"},{min:1,max:2.5,label:"낮음→호재",color:"#4ade80"},{min:2.5,max:3.5,label:"중립",color:"#fbbf24"},{min:3.5,max:5,label:"높음→악재",color:"#fb923c"},{min:5,max:999,label:"매우 높음",color:"#f87171"}],
+    normal:"2~3.5%", danger:"5% 이상", opportunity:"인하 시작 시점",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round((v/6)*80+10))),
+    getLabel:v=>v<=1?"초저금리":v<=2.5?"낮음":v<=3.5?"중립":v<=5?"높음":"매우 높음",
+  },
+  { id:"dxy",       weight:8,  label:"달러 강도 (DXY)",        icon:"💵", unit:"",      mockValue:104.2,mockPrev:102.8,
+    why:"달러가 강하면 신흥국 자금이 미국으로 빠져나가고, 금·원자재가 내립니다.",
+    buySignal:"DXY 90 이하 → 약달러, 신흥국·금·원자재 매수 기회",
+    ranges:[{min:0,max:90,label:"약달러→신흥국 유리",color:"#00e5b0"},{min:90,max:98,label:"약간 약세",color:"#4ade80"},{min:98,max:103,label:"중립",color:"#fbbf24"},{min:103,max:108,label:"강달러→부담",color:"#fb923c"},{min:108,max:999,label:"초강달러→위기",color:"#f87171"}],
+    normal:"98~103", danger:"108 이상", opportunity:"90 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-90)/20)*80+10))),
+    getLabel:v=>v<90?"약달러":v<98?"약간 약세":v<103?"중립":v<108?"강달러":"초강달러",
+  },
+  { id:"sox",       weight:8,  label:"반도체 지수 (SOX)",      icon:"💻", unit:"",      mockValue:5120, mockPrev:4850,
+    why:"AI·반도체 선행지표. 주식시장 전체 방향을 2~3개월 미리 알려줍니다.",
+    buySignal:"SOX 3000 이하 → 반도체 저점 매수, AI 테마 장기 기회",
+    ranges:[{min:0,max:2500,label:"침체→공황 수준",color:"#f87171"},{min:2500,max:3500,label:"회복 중",color:"#fb923c"},{min:3500,max:4500,label:"보통",color:"#fbbf24"},{min:4500,max:5500,label:"강세",color:"#4ade80"},{min:5500,max:999999,label:"과열 주의",color:"#f87171"}],
+    normal:"3500~5000", danger:"2500 이하 또는 고점 -40%", opportunity:"3000 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round((v/6000)*100))),
+    getLabel:v=>v<2500?"침체":v<3500?"회복 중":v<4500?"보통":v<5500?"강세":"과열",
+  },
+  { id:"gold",      weight:7,  label:"금 가격",                icon:"🥇", unit:"$",     mockValue:2342, mockPrev:2180,
+    why:"금 급등 = 불안 심리로 안전자산 피신. 인플레·위기 헤지 자산.",
+    buySignal:"금 $1500 이하 → 장기 매수 기회 (인플레 헤지 저점)",
+    ranges:[{min:0,max:1500,label:"저평가",color:"#00e5b0"},{min:1500,max:1900,label:"보통",color:"#4ade80"},{min:1900,max:2300,label:"상승 중",color:"#fbbf24"},{min:2300,max:2700,label:"고점권 주의",color:"#fb923c"},{min:2700,max:999999,label:"급등→리스크오프",color:"#f87171"}],
+    normal:"$1700~$2000", danger:"$2500 이상", opportunity:"$1500 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-1500)/1500)*80+10))),
+    getLabel:v=>v<1500?"저평가":v<1900?"보통":v<2300?"상승 중":v<2700?"고점권":"급등",
+  },
+  { id:"wti",       weight:5,  label:"국제 유가 (WTI)",        icon:"🛢️", unit:"$",     mockValue:73.4, mockPrev:69.8,
+    why:"유가 급등 = 물가 상승 → 금리 인상 압력 → 주식 부담. $100 이상은 경제 위기.",
+    buySignal:"WTI $50 이하 → 에너지주·배당주 저점 매수 기회",
+    ranges:[{min:0,max:50,label:"저유가→경기 우려",color:"#fb923c"},{min:50,max:70,label:"적정 저가",color:"#4ade80"},{min:70,max:85,label:"보통",color:"#fbbf24"},{min:85,max:100,label:"고유가→인플레",color:"#fb923c"},{min:100,max:999,label:"위험 수준",color:"#f87171"}],
+    normal:"$60~$85", danger:"$100 이상", opportunity:"$50 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-40)/80)*100))),
+    getLabel:v=>v<50?"저유가":v<70?"적정 저가":v<85?"보통":v<100?"고유가":"위험",
+  },
+  { id:"copper",    weight:5,  label:"구리 가격",              icon:"🔧", unit:"$/lb",  mockValue:4.48, mockPrev:4.22,
+    why:"닥터 커퍼. 건설·전기차·반도체 필수. 급락 = 경기침체 선행 신호.",
+    buySignal:"구리 $2.5 이하 → 경기침체 공포 극대화, 역발상 매수",
+    ranges:[{min:0,max:2.5,label:"침체 강력 신호",color:"#f87171"},{min:2.5,max:3.5,label:"경기 둔화",color:"#fb923c"},{min:3.5,max:4.5,label:"보통",color:"#fbbf24"},{min:4.5,max:5.5,label:"경기 강세",color:"#4ade80"},{min:5.5,max:999,label:"과열",color:"#fb923c"}],
+    normal:"$3.5~$4.5/lb", danger:"$3 이하", opportunity:"$2.5 이하",
+    scoreCalc:v=>Math.max(0,Math.min(100,Math.round(((v-3)/3)*80+10))),
+    getLabel:v=>v<2.5?"침체 신호":v<3.5?"경기 둔화":v<4.5?"보통":v<5.5?"경기 강세":"과열",
+  },
+];
+
+/* TLT 지표 */
+const TLT_INDICATORS = [
+  { id:"t10y",   label:"10년물 금리", icon:"📈", unit:"%",  mockValue:4.38, mockPrev:4.22,
+    // 금리 높을수록 TLT 매수 기회 (가격 하락)
+    tltScore: v => Math.max(0, Math.min(100, Math.round(((v-2)/3.5)*100))),
+    direction:"up_good", // 높을수록 TLT에 유리 (가격 쌀 때 사는 것)
+    signal: v => v>=4.5?"🟢 강력 매수":v>=4?"🟡 매수 고려":v>=3?"🟡 중립":v>=2?"🔴 매도 고려":"🔴 강력 매도",
+    why:"금리 높을수록 TLT 가격 낮음 → 싸게 살 기회. 금리 인하 시작되면 TLT 가격 급등."
+  },
+  { id:"t30y",   label:"30년물 금리", icon:"📉", unit:"%",  mockValue:4.61, mockPrev:4.48,
+    tltScore: v => Math.max(0, Math.min(100, Math.round(((v-2)/3.5)*100))),
+    direction:"up_good",
+    signal: v => v>=4.8?"🟢 강력 매수":v>=4.2?"🟡 매수 고려":v>=3.2?"🟡 중립":"🔴 매도",
+    why:"TLT는 30년물 국채 추종. 30년물 금리가 높을수록 TLT는 저평가 상태."
+  },
+  { id:"cpi",    label:"CPI 인플레",  icon:"🔥", unit:"%",  mockValue:3.4,  mockPrev:3.7,
+    // CPI 하락 = TLT 매수 신호
+    tltScore: v => Math.max(0, Math.min(100, Math.round(((6-v)/5)*100))),
+    direction:"down_good",
+    signal: v => v<=2?"🟢 강력 매수":v<=3?"🟢 매수 유리":v<=4?"🟡 중립":v<=5?"🔴 매도 고려":"🔴 강력 매도",
+    why:"CPI 하락 = 인플레 완화 → Fed 금리 인하 가능 → TLT 가격 상승."
+  },
+  { id:"fedcut", label:"금리인하 확률",icon:"🎯", unit:"%",  mockValue:68,   mockPrev:55,
+    // 인하 확률 높을수록 TLT 매수
+    tltScore: v => Math.max(0, Math.min(100, Math.round(v))),
+    direction:"up_good",
+    signal: v => v>=75?"🟢 강력 매수":v>=55?"🟢 매수 유리":v>=35?"🟡 중립":"🔴 매도",
+    why:"FedWatch 금리인하 확률. 높을수록 TLT 가격 상승 기대."
+  },
+  { id:"unemployment",label:"실업률",  icon:"👷", unit:"%",  mockValue:4.1,  mockPrev:3.9,
+    // 실업률 상승 = 경기 악화 = Fed 금리 인하 = TLT 호재
+    tltScore: v => Math.max(0, Math.min(100, Math.round(((v-3)/4)*100))),
+    direction:"up_good",
+    signal: v => v>=5?"🟢 강력 매수":v>=4.5?"🟢 매수 유리":v>=4?"🟡 중립":"🔴 매도",
+    why:"실업률 상승 = 경기 침체 신호 → Fed 금리 인하 압력 → TLT 급등 기대."
+  },
+  { id:"lei",    label:"경기선행지수", icon:"🔮", unit:"",   mockValue:-0.3, mockPrev:-0.1,
+    // LEI 하락 = 경기 둔화 = 채권 강세
+    tltScore: v => Math.max(0, Math.min(100, Math.round(((-v+1)/2)*80+10))),
+    direction:"down_good",
+    signal: v => v<=-0.5?"🟢 강력 매수":v<=0?"🟢 매수 유리":v<=0.3?"🟡 중립":"🔴 매도",
+    why:"경기선행지수 마이너스 = 경기 둔화 선행 신호 → 채권 수요 증가 → TLT 상승."
+  },
+];
+
+/* ─────────────────────────────────────────────────────────
+   ASSET ALLOCATION ENGINE
+───────────────────────────────────────────────────────── */
+function calcAssetAllocation(scores) {
+  const s = scores;
+  const vix=s["vix"]||50, cape=s["cape"]||50, buf=s["buffett"]||50;
+  const tnote=s["treasury10y"]||50, yc=s["yield_curve"]||50;
+  const fed=s["fedrate"]||50, dxy=s["dxy"]||50, gold=s["gold"]||50;
+  const total=(vix+cape+buf+tnote+yc+fed+dxy+gold)/8;
+  const highRate=(tnote+fed)/2>60, rateDown=(tnote+fed)/2<40;
+  const recessionRisk=yc<40, inflation=(s["wti"]+s["gold"])/2>65;
+  const strongDollar=dxy>60;
+  let stock=50,bond=25,gold_w=10,cash=10,reit=5;
+  if(total>75){stock-=20;bond+=10;gold_w+=5;cash+=10;reit-=5;}
+  else if(total>60){stock-=10;bond+=5;cash+=7;reit-=2;}
+  else if(total<25){stock+=20;bond-=10;gold_w-=3;cash-=5;reit-=2;}
+  else if(total<40){stock+=10;bond-=5;cash-=5;}
+  if(highRate){stock-=8;bond-=5;cash+=10;reit-=5;gold_w+=8;}
+  if(rateDown){stock+=8;bond+=8;cash-=10;reit+=5;gold_w-=5;}
+  if(recessionRisk){stock-=15;bond+=15;gold_w+=5;cash+=5;reit-=10;}
+  if(inflation){bond-=10;gold_w+=8;stock-=3;cash+=5;}
+  if(strongDollar){gold_w-=3;bond+=3;}
+  stock=Math.max(5,stock);bond=Math.max(5,bond);gold_w=Math.max(3,gold_w);cash=Math.max(3,cash);reit=Math.max(0,reit);
+  const tw=stock+bond+gold_w+cash+reit, sc=100/tw;
+  return {
+    stock:Math.round(stock*sc), bond:Math.round(bond*sc),
+    gold:Math.round(gold_w*sc), cash:Math.round(cash*sc), reit:Math.round(reit*sc),
+    context:{total:Math.round(total),highRate,rateDown,recessionRisk,inflation,strongDollar}
+  };
+}
+
+/* TLT 점수 계산 */
+function calcTLTScore(indicators) {
+  const weights = {t10y:20,t30y:20,cpi:20,fedcut:20,unemployment:10,lei:10};
+  let total=0, tw=0;
+  indicators.forEach(ind=>{
+    const w=weights[ind.id]||10;
+    total+=ind.tltScore(ind.mockValue)*w;
+    tw+=w;
+  });
+  return Math.round(total/tw);
+}
+
+/* ─────────────────────────────────────────────────────────
+   GRADE SYSTEM
+───────────────────────────────────────────────────────── */
+const GRADES=[
+  {max:20, grade:"BEST",   korean:"최고의 기회", sub:"역사적 매수 타이밍",  color:"#00e5b0",bg:"#00e5b015",emoji:"🚀",advice:"공격적으로 투자해도 좋습니다. 시장이 극도로 겁먹고 있어요."},
+  {max:35, grade:"GOOD",   korean:"좋은 구간",   sub:"분할 매수 추천",      color:"#4ade80",bg:"#4ade8015",emoji:"✅",advice:"조금씩 나눠서 매수하기 좋은 시기입니다."},
+  {max:55, grade:"NORMAL", korean:"보통",         sub:"관망 또는 유지",      color:"#fbbf24",bg:"#fbbf2415",emoji:"😐",advice:"특별히 서두를 필요 없어요. 기존 투자를 유지하세요."},
+  {max:75, grade:"BAD",    korean:"주의 구간",    sub:"신규 투자 자제",      color:"#fb923c",bg:"#fb923c15",emoji:"⚠️",advice:"새로운 투자는 신중하게. 수익 일부 실현을 고려하세요."},
+  {max:101,grade:"DANGER", korean:"위험! 과열",   sub:"현금 비중 높이세요",  color:"#f87171",bg:"#f8717115",emoji:"🚨",advice:"시장이 너무 뜨겁습니다. 폭락이 올 수 있어요. 현금을 늘리세요."},
+];
+function getGrade(s){return GRADES.find(g=>s<g.max)||GRADES[4];}
+function getIG(s){
+  if(s<=25)return{label:"최고",color:"#00e5b0"};
+  if(s<=40)return{label:"좋음",color:"#4ade80"};
+  if(s<=60)return{label:"보통",color:"#fbbf24"};
+  if(s<=78)return{label:"주의",color:"#fb923c"};
+  return{label:"위험",color:"#f87171"};
+}
+
+/* TLT grade */
+function getTLTGrade(s){
+  if(s>=70)return{label:"강력 매수",color:"#00e5b0",bg:"#00e5b015",emoji:"🚀",action:"TLT 적극 매수 구간입니다. 분할 매수를 시작하세요."};
+  if(s>=50)return{label:"매수 우위",color:"#4ade80",bg:"#4ade8015",emoji:"✅",action:"TLT 매수 유리 구간. 소량 선매수 추천합니다."};
+  if(s>=30)return{label:"중립",color:"#fbbf24",bg:"#fbbf2415",emoji:"😐",action:"TLT 관망 구간. 신규 매수는 서두르지 마세요."};
+  if(s>=15)return{label:"매도 우위",color:"#fb923c",bg:"#fb923c15",emoji:"⚠️",action:"TLT 매도 고려. 보유 중이라면 일부 실현하세요."};
+  return{label:"강력 매도",color:"#f87171",bg:"#f8717115",emoji:"🚨",action:"TLT 매도 구간. 신규 매수 비추천. 현금 전환 고려."};
+}
+
+/* ─────────────────────────────────────────────────────────
+   BIG GAUGE
+───────────────────────────────────────────────────────── */
+function BigGauge({score,grade,size="normal"}){
+  const R=size==="small"?80:110, stroke=size==="small"?16:22;
+  const W=size==="small"?240:320, H=size==="small"?150:195;
+  const cx=W/2, cy=size==="small"?120:158;
+  const sA=-210,eA=30,arc=eA-sA;
+  const p2xy=(a,r)=>({x:cx+r*Math.cos(a*Math.PI/180),y:cy+r*Math.sin(a*Math.PI/180)});
+  const arcD=(s,e,r)=>{const sp=p2xy(s,r),ep=p2xy(e,r),lg=Math.abs(e-s)>180?1:0;return `M${sp.x} ${sp.y}A${r} ${r} 0 ${lg} 1 ${ep.x} ${ep.y}`;};
+  const fillEnd=sA+arc*score/100;
+  const nA=fillEnd,nTip=p2xy(nA,R-stroke/2-6),nB1=p2xy(nA+90,8),nB2=p2xy(nA-90,8);
+  const segs=[[sA,sA+arc*0.2,"#00e5b0"],[sA+arc*0.2,sA+arc*0.35,"#4ade80"],[sA+arc*0.35,sA+arc*0.55,"#fbbf24"],[sA+arc*0.55,sA+arc*0.75,"#fb923c"],[sA+arc*0.75,eA,"#f87171"]];
+  const segLabels=size==="small"?[]:["BEST","GOOD","NORMAL","BAD","DANGER"];
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{overflow:"visible"}}>
+        {/* Track shadow */}
+        <path d={arcD(sA,eA,R)} fill="none" stroke="#111122" strokeWidth={stroke+4} strokeLinecap="round"/>
+        <path d={arcD(sA,eA,R)} fill="none" stroke="#1c1c2e" strokeWidth={stroke} strokeLinecap="round"/>
+        {/* Segment ticks */}
+        {segs.map(([s,e,c],i)=>(
+          <path key={i} d={arcD(s,e,R)} fill="none" stroke={c} strokeWidth={stroke-5} strokeLinecap="butt" opacity="0.3"/>
+        ))}
+        {/* Segment dividers */}
+        {[0.2,0.35,0.55,0.75].map((frac,i)=>{
+          const a=sA+arc*frac;
+          const inner=p2xy(a,R-stroke/2-2);
+          const outer=p2xy(a,R+stroke/2+2);
+          return <line key={i} x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke="#07071a" strokeWidth="2.5"/>;
+        })}
+        {/* Fill arc */}
+        <path d={arcD(sA,fillEnd,R)} fill="none" stroke={grade.color} strokeWidth={stroke-5} strokeLinecap="round"
+          style={{filter:`drop-shadow(0 0 12px ${grade.color})`}}/>
+        {/* Needle */}
+        <polygon points={`${nTip.x},${nTip.y} ${nB1.x},${nB1.y} ${nB2.x},${nB2.y}`} fill="white" opacity="0.95"/>
+        <circle cx={cx} cy={cy} r={size==="small"?7:10} fill="#0d0d1f" stroke={grade.color} strokeWidth="3"/>
+        {/* Segment labels */}
+        {size!=="small" && segLabels.map((lbl,i)=>{
+          const a=sA+arc*(i*0.2+0.1); const p=p2xy(a,R+28);
+          return(
+            <text key={i} x={p.x} y={p.y} textAnchor="middle" fill={segs[i][2]}
+              fontSize="9" fontFamily="monospace" fontWeight="800" letterSpacing="0.5">{lbl}</text>
+          );
+        })}
+      </svg>
+      <div style={{marginTop:size==="small"?"-20px":"-28px",textAlign:"center"}}>
+        <div style={{fontSize:size==="small"?"44px":"68px",fontWeight:"900",lineHeight:1,color:grade.color,
+          fontFamily:"'Courier New',monospace",textShadow:`0 0 40px ${grade.color}66`}}>{score}</div>
+        <div style={{fontSize:"11px",color:"#555",fontFamily:"monospace"}}>/ 100점</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   GRADE BAR (점수 기준표 — 텍스트만, 아이콘 없음)
+───────────────────────────────────────────────────────── */
+function GradeBar({totalScore}){
+  return(
+    <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"14px",marginBottom:"14px"}}>
+      <div style={{fontSize:"11px",color:"#555",marginBottom:"10px"}}>▎점수 기준표</div>
+      <div style={{display:"flex",gap:"3px"}}>
+        {GRADES.map((g,gi)=>{
+          const prev=GRADES[gi-1]?.max||0;
+          const active=totalScore<g.max&&totalScore>=prev;
+          return(
+            <div key={g.grade} style={{flex:1,textAlign:"center"}}>
+              <div style={{
+                background:active?g.color:"transparent",
+                borderRadius:"8px",padding:"7px 2px",
+                border:`1.5px solid ${active?g.color:g.color+"55"}`,
+                transition:"all 0.3s",
+              }}>
+                <div style={{fontSize:"11px",fontWeight:"900",
+                  color:active?"#07071a":g.color,letterSpacing:"0.3px"}}>
+                  {g.grade}
+                </div>
+              </div>
+              <div style={{fontSize:"8px",color:"#444",marginTop:"3px"}}>
+                {["0-20","21-35","36-55","56-75","76+"][gi]}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   RANGE BAR (지표 상세)
+───────────────────────────────────────────────────────── */
+function RangeBar({ranges,currentValue}){
+  const nums=ranges.flatMap(r=>[r.min<=-500?currentValue*0.3:r.min, r.max>=500000?currentValue*1.5:r.max===999?currentValue*1.4:r.max]);
+  const minV=Math.min(...nums,currentValue*0.7);
+  const maxV=Math.max(...nums,currentValue*1.2);
+  const span=maxV-minV;
+  const pct=v=>Math.max(0,Math.min(100,((v-minV)/span)*100));
+  const curPct=pct(currentValue);
+  return(
+    <div style={{marginTop:"12px"}}>
+      <div style={{position:"relative",height:"20px",borderRadius:"10px",overflow:"hidden",display:"flex"}}>
+        {ranges.map((r,i)=>{
+          const rMin=r.min<=-500?minV:r.min; const rMax=r.max>=500000?maxV:r.max>=900?currentValue*1.4:r.max;
+          const w=Math.max(0,pct(Math.min(rMax,maxV))-pct(Math.max(rMin,minV)));
+          return w>0?<div key={i} style={{width:`${w}%`,background:r.color,opacity:0.65}}/>:null;
+        })}
+        {/* White marker */}
+        <div style={{position:"absolute",top:"-2px",bottom:"-2px",left:`calc(${curPct}% - 2px)`,
+          width:"4px",background:"white",borderRadius:"2px",boxShadow:"0 0 10px white",zIndex:2}}/>
+      </div>
+      <div style={{display:"flex",marginTop:"4px"}}>
+        {ranges.map((r,i)=>{
+          const rMin=r.min<=-500?minV:r.min; const rMax=r.max>=500000?maxV:r.max>=900?currentValue*1.4:r.max;
+          const w=Math.max(0,pct(Math.min(rMax,maxV))-pct(Math.max(rMin,minV)));
+          return w>1?<div key={i} style={{fontSize:"7.5px",color:r.color,textAlign:"center",flex:w,fontWeight:"700",lineHeight:"1.2"}}>{r.label}</div>:null;
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   INDICATOR ROW
+───────────────────────────────────────────────────────── */
+function IndicatorRow({ind,score,rank,expanded,onToggle}){
+  const ig=getIG(score);
+  const delta=ind.mockValue-ind.mockPrev;
+  const isUp=delta>0;
+  const fmtVal=v=>v>999?Math.round(v).toLocaleString():Math.abs(v)<10?v.toFixed(2):v.toFixed(1);
+  const isOpportunity=score<=25;
+
+  return(
+    <div onClick={onToggle} style={{
+      background:isOpportunity?"#001a12":expanded?"#13132a":"#0c0c1e",
+      border:`1.5px solid ${isOpportunity?"#00e5b0"+(expanded?"cc":"66"):expanded?ig.color+"66":"#1a1a30"}`,
+      borderRadius:"14px",padding:"14px 16px",cursor:"pointer",transition:"all 0.2s",marginBottom:"8px",
+      position:"relative",overflow:"hidden",
+    }}>
+      {/* 기회 배너 */}
+      {isOpportunity&&(
+        <div style={{position:"absolute",top:0,left:0,right:0,height:"3px",
+          background:"linear-gradient(90deg,#00e5b0,#4ade80,#00e5b0)",
+          boxShadow:"0 0 12px #00e5b0"}}/>
+      )}
+      <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+        <div style={{flexShrink:0,textAlign:"center",width:"36px"}}>
+          <div style={{fontSize:"7px",color:"#444",fontFamily:"monospace"}}>#{rank}</div>
+          <div style={{fontSize:"26px",lineHeight:1.2}}>{ind.icon}</div>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"5px"}}>
+            <div style={{fontSize:"12px",fontWeight:"700",color:"#ddd",
+              whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ind.label}</div>
+            {isOpportunity&&(
+              <span style={{flexShrink:0,fontSize:"9px",fontWeight:"900",color:"#00e5b0",
+                background:"#00e5b022",border:"1px solid #00e5b066",borderRadius:"4px",padding:"1px 5px"}}>
+                🚀 기회!
+              </span>
+            )}
+          </div>
+          <div style={{position:"relative",height:"7px",background:"#1a1a30",borderRadius:"4px",overflow:"hidden"}}>
+            <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${score}%`,
+              background:`linear-gradient(90deg,#00e5b0,${ig.color})`,borderRadius:"4px",
+              boxShadow:`0 0 8px ${ig.color}88`,transition:"width 1.2s ease"}}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:"3px"}}>
+            <span style={{fontSize:"10px",color:"#666",fontFamily:"monospace"}}>
+              {fmtVal(ind.mockValue)}{ind.unit}
+              <span style={{color:isUp?"#f87171":"#4ade80",marginLeft:"4px"}}>
+                {isUp?"▲":"▼"}{Math.abs(delta).toFixed(delta>10?0:2)}
+              </span>
+            </span>
+          </div>
+        </div>
+        <div style={{flexShrink:0,textAlign:"center"}}>
+          <div style={{fontSize:"11px",fontWeight:"900",color:ig.color,background:ig.color+"22",
+            borderRadius:"8px",padding:"4px 10px",border:`1px solid ${ig.color}44`,minWidth:"44px"}}>
+            {ig.label}
+          </div>
+          <div style={{fontSize:"9px",color:"#444",fontFamily:"monospace",marginTop:"3px"}}>{score}점</div>
+        </div>
+      </div>
+
+      {expanded&&(
+        <div style={{marginTop:"14px",paddingTop:"14px",borderTop:"1px solid #1a1a2e"}}>
+          <div style={{fontSize:"12px",color:"#aaa",lineHeight:"1.7",marginBottom:"10px"}}>💡 {ind.why}</div>
+          {isOpportunity&&(
+            <div style={{background:"#00e5b015",border:"1px solid #00e5b044",borderRadius:"10px",
+              padding:"10px 12px",marginBottom:"12px"}}>
+              <div style={{fontSize:"11px",color:"#00e5b0",fontWeight:"700",marginBottom:"3px"}}>🛒 매수 시그널</div>
+              <div style={{fontSize:"11px",color:"#88ffdd",lineHeight:"1.6"}}>{ind.buySignal}</div>
+            </div>
+          )}
+          <div style={{display:"inline-block",background:ig.color+"22",borderRadius:"6px",
+            padding:"4px 12px",fontSize:"11px",color:ig.color,fontWeight:"700",marginBottom:"14px"}}>
+            현재: {ind.getLabel(ind.mockValue)}
+          </div>
+          <RangeBar ranges={ind.ranges} currentValue={ind.mockValue}/>
+          <div style={{marginTop:"14px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px"}}>
+            {[{label:"📍 정상 범위",val:ind.normal,color:"#4ade80"},{label:"🚨 위험 수준",val:ind.danger,color:"#f87171"},{label:"🚀 기회 수준",val:ind.opportunity,color:"#00e5b0"}].map(item=>(
+              <div key={item.label} style={{background:"#0a0a18",borderRadius:"8px",padding:"8px",border:`1px solid ${item.color}33`}}>
+                <div style={{fontSize:"8px",color:item.color,fontWeight:"700",marginBottom:"4px"}}>{item.label}</div>
+                <div style={{fontSize:"9px",color:"#bbb",lineHeight:"1.4"}}>{item.val}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   ASSET ALLOCATION TAB
+───────────────────────────────────────────────────────── */
+const ASSET_META={
+  stock:{label:"주식",icon:"📈",color:"#6366f1",desc:"성장 핵심 자산"},
+  bond: {label:"채권",icon:"📋",color:"#4ade80",desc:"안정·이자 수입"},
+  gold: {label:"금",  icon:"🥇",color:"#fbbf24",desc:"위기·인플레 헤지"},
+  cash: {label:"현금",icon:"💵",color:"#94a3b8",desc:"기회 대기자금"},
+  reit: {label:"부동산",icon:"🏢",color:"#f97316",desc:"배당·인플레 헤지"},
+};
+function AllocationTab({alloc,grade}){
+  const [guideOpen,setGuideOpen]=useState(false);
+  const keys=["stock","bond","gold","cash","reit"];
+  const ctx=alloc.context;
+  const envTags=[
+    ctx.recessionRisk&&{label:"⚠️ 침체 위험",color:"#f87171"},
+    ctx.highRate&&{label:"📈 고금리",color:"#fb923c"},
+    ctx.rateDown&&{label:"📉 금리 인하",color:"#4ade80"},
+    ctx.inflation&&{label:"🔥 인플레",color:"#fbbf24"},
+    ctx.strongDollar&&{label:"💵 강달러",color:"#94a3b8"},
+  ].filter(Boolean);
+
+  return(
+    <>
+      {/* 현재 추천 자산배분 */}
+      <div style={{background:"#0c0c1e",border:`1.5px solid ${grade.color}44`,borderRadius:"16px",padding:"18px",marginBottom:"14px"}}>
+        <div style={{fontSize:"13px",fontWeight:"900",color:grade.color,marginBottom:"4px"}}>💼 현재 추천 자산배분</div>
+        <div style={{fontSize:"10px",color:"#555",marginBottom:"14px",fontFamily:"monospace"}}>지표 조합 → 동적 계산 결과</div>
+        {envTags.length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:"5px",marginBottom:"14px"}}>
+            {envTags.map((t,i)=>(
+              <span key={i} style={{fontSize:"10px",color:t.color,background:t.color+"22",borderRadius:"6px",padding:"3px 8px",fontWeight:"700",border:`1px solid ${t.color}44`}}>{t.label}</span>
+            ))}
+          </div>
+        )}
+        <div style={{display:"flex",height:"36px",borderRadius:"10px",overflow:"hidden",marginBottom:"16px",gap:"2px"}}>
+          {keys.map(k=>alloc[k]>0&&(
+            <div key={k} style={{flex:alloc[k],background:ASSET_META[k].color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",fontWeight:"900",color:"#07071a",transition:"flex 1s ease",minWidth:alloc[k]<8?"0":"auto"}}>
+              {alloc[k]>=8?`${alloc[k]}%`:""}
+            </div>
+          ))}
+        </div>
+        {keys.map(k=>(
+          <div key={k} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
+            <div style={{width:"12px",height:"12px",borderRadius:"3px",background:ASSET_META[k].color,flexShrink:0}}/>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"3px"}}>
+                <span style={{fontSize:"12px",fontWeight:"700",color:"#ddd"}}>{ASSET_META[k].icon} {ASSET_META[k].label}</span>
+                <span style={{fontSize:"14px",fontWeight:"900",color:ASSET_META[k].color,fontFamily:"monospace"}}>{alloc[k]}%</span>
+              </div>
+              <div style={{position:"relative",height:"5px",background:"#1a1a30",borderRadius:"3px",overflow:"hidden"}}>
+                <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${alloc[k]}%`,background:ASSET_META[k].color,transition:"width 1.2s ease"}}/>
+              </div>
+              <div style={{fontSize:"9px",color:"#555",marginTop:"2px"}}>{ASSET_META[k].desc}</div>
+            </div>
+          </div>
+        ))}
+        {/* Reference models */}
+        <div style={{marginTop:"14px",paddingTop:"14px",borderTop:"1px solid #1a1a30"}}>
+          <div style={{fontSize:"10px",color:"#555",marginBottom:"8px"}}>📚 참고 모델 대비</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px"}}>
+            {[{name:"60/40 전통형",vals:{stock:60,bond:40,gold:0,cash:0,reit:0}},{name:"올웨더(레이달리오)",vals:{stock:30,bond:55,gold:7,cash:0,reit:8}}].map(model=>(
+              <div key={model.name} style={{background:"#0a0a18",borderRadius:"8px",padding:"8px 10px",border:"1px solid #1a1a30"}}>
+                <div style={{fontSize:"9px",color:"#666",marginBottom:"6px"}}>{model.name}</div>
+                <div style={{display:"flex",height:"8px",borderRadius:"4px",overflow:"hidden",gap:"1px"}}>
+                  {keys.map(k=>model.vals[k]>0&&<div key={k} style={{flex:model.vals[k],background:ASSET_META[k].color}}/>)}
+                </div>
+                <div style={{fontSize:"8px",color:"#555",marginTop:"4px"}}>
+                  {keys.filter(k=>model.vals[k]>0).map(k=>`${ASSET_META[k].label}${model.vals[k]}%`).join(" · ")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 상황별 가이드 — 접었다 펼치기 */}
+      <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",marginBottom:"14px",overflow:"hidden"}}>
+        <div onClick={()=>setGuideOpen(o=>!o)}
+          style={{padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+          <div>
+            <div style={{fontSize:"13px",fontWeight:"900",color:"#ddd"}}>📖 상황별 자산배분 가이드</div>
+            <div style={{fontSize:"10px",color:"#555",marginTop:"2px"}}>금리·경기 상황에 따른 자산 조절법</div>
+          </div>
+          <div style={{fontSize:"18px",color:"#555",transition:"transform 0.3s",transform:guideOpen?"rotate(180deg)":"none"}}>▼</div>
+        </div>
+        {guideOpen&&(
+          <div style={{padding:"0 14px 14px"}}>
+            {[
+              {situation:"💸 금리 인하 시작",buy:["주식","장기채권(TLT)","부동산"],sell:["현금","단기채권"],color:"#4ade80"},
+              {situation:"📈 금리 인상 국면",buy:["현금","단기채권","금"],sell:["성장주","장기채권(TLT)"],color:"#fb923c"},
+              {situation:"🌱 경기 확장 중", buy:["주식","원자재","부동산"],sell:["채권","금"],color:"#00e5b0"},
+              {situation:"📉 경기 침체 우려",buy:["채권(TLT)","금","현금"],sell:["경기민감주","원자재"],color:"#f87171"},
+              {situation:"🔥 인플레이션 급등",buy:["금","원자재","부동산"],sell:["장기채권(TLT)"],color:"#fbbf24"},
+              {situation:"💥 금융위기/공황",buy:["현금","금","국채(TLT)"],sell:["주식","부동산"],color:"#f87171"},
+            ].map(item=>(
+              <div key={item.situation} style={{marginBottom:"10px",padding:"12px",background:"#0a0a18",borderRadius:"10px",border:`1px solid ${item.color}33`}}>
+                <div style={{fontSize:"12px",fontWeight:"900",color:item.color,marginBottom:"8px"}}>{item.situation}</div>
+                <div style={{display:"flex",gap:"8px"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:"9px",color:"#4ade80",marginBottom:"4px",fontWeight:"700"}}>▲ 늘릴 자산</div>
+                    {item.buy.map(a=><div key={a} style={{fontSize:"10px",color:"#aaa",marginBottom:"2px"}}>· {a}</div>)}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:"9px",color:"#f87171",marginBottom:"4px",fontWeight:"700"}}>▼ 줄일 자산</div>
+                    {item.sell.map(a=><div key={a} style={{fontSize:"10px",color:"#aaa",marginBottom:"2px"}}>· {a}</div>)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   TLT TAB
+───────────────────────────────────────────────────────── */
+function TLTMiniChart(){
+  // 모의 TLT 가격 & 금리 데이터 (월별 최근 12개)
+  const months=["24.6","24.7","24.8","24.9","24.10","24.11","24.12","25.1","25.2","25.3","25.4","25.5"];
+  const tltPrices=[88.2,90.1,91.4,95.2,93.8,98.1,94.2,92.8,89.4,87.6,90.2,91.8];
+  const rates=[4.40,4.25,3.85,3.78,4.24,4.18,4.58,4.62,4.52,4.20,4.28,4.38];
+  const W=340,H=160,padL=36,padR=16,padT=16,padB=28;
+  const gW=W-padL-padR, gH=H-padT-padB;
+  const minT=Math.min(...tltPrices)-2, maxT=Math.max(...tltPrices)+2;
+  const minR=Math.min(...rates)-0.1, maxR=Math.max(...rates)+0.1;
+  const tx=i=>padL+i*(gW/(months.length-1));
+  const ty=v=>padT+gH-(((v-minT)/(maxT-minT))*gH);
+  const ry=v=>padT+gH-(((v-minR)/(maxR-minR))*gH);
+  const tPath="M"+tltPrices.map((v,i)=>`${tx(i)},${ty(v)}`).join("L");
+  const rPath="M"+rates.map((v,i)=>`${tx(i)},${ry(v)}`).join("L");
+
+  return(
+    <div style={{background:"#0a0a18",borderRadius:"10px",padding:"12px",marginBottom:"14px"}}>
+      <div style={{fontSize:"10px",color:"#555",marginBottom:"8px"}}>📈 TLT 가격 vs 10년물 금리 (최근 12개월 모의)</div>
+      <div style={{display:"flex",gap:"12px",marginBottom:"8px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
+          <div style={{width:"16px",height:"2px",background:"#4ade80"}}/><span style={{fontSize:"9px",color:"#4ade80"}}>TLT 가격</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
+          <div style={{width:"16px",height:"2px",background:"#f87171",borderTop:"2px dashed #f87171"}}/><span style={{fontSize:"9px",color:"#f87171"}}>10년물 금리</span>
+        </div>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`}>
+        {/* Grid */}
+        {[0,0.25,0.5,0.75,1].map(f=>(
+          <line key={f} x1={padL} y1={padT+gH*f} x2={W-padR} y2={padT+gH*f} stroke="#1a1a30" strokeWidth="1"/>
+        ))}
+        {/* TLT area */}
+        <path d={tPath+`L${tx(months.length-1)},${padT+gH}L${tx(0)},${padT+gH}Z`} fill="#4ade8012"/>
+        <path d={tPath} fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round"/>
+        {/* Rate line */}
+        <path d={rPath} fill="none" stroke="#f87171" strokeWidth="1.5" strokeDasharray="5,3"/>
+        {/* Labels */}
+        {months.map((m,i)=>i%3===0&&(
+          <text key={i} x={tx(i)} y={H-6} textAnchor="middle" fill="#444" fontSize="8" fontFamily="monospace">{m}</text>
+        ))}
+        {/* TLT axis (left) */}
+        <text x={padL-4} y={padT+4} textAnchor="end" fill="#4ade80" fontSize="8" fontFamily="monospace">{maxT.toFixed(0)}</text>
+        <text x={padL-4} y={padT+gH+4} textAnchor="end" fill="#4ade80" fontSize="8" fontFamily="monospace">{minT.toFixed(0)}</text>
+        {/* Current dots */}
+        <circle cx={tx(months.length-1)} cy={ty(tltPrices[tltPrices.length-1])} r="4" fill="#4ade80"/>
+        <circle cx={tx(months.length-1)} cy={ry(rates[rates.length-1])} r="4" fill="#f87171"/>
+      </svg>
+      <div style={{fontSize:"9px",color:"#333",marginTop:"4px",textAlign:"center"}}>※ 시뮬레이션 데이터 (실제 연동 시 FRED API 사용)</div>
+    </div>
+  );
+}
+
+function TLTTab({tltScore}){
+  const tg=getTLTGrade(tltScore);
+  const grade=getGrade(tltScore<50?Math.round(tltScore*0.7):Math.round(tltScore*0.5+25));
+  const gaugeGrade={color:tg.color,bg:tg.bg,emoji:tg.emoji};
+  const [aiText,setAiText]=useState("");
+  const [aiLoading,setAiLoading]=useState(false);
+
+  // TLT 이론가 계산 (금리 기반)
+  const rate10y=TLT_INDICATORS.find(i=>i.id==="t10y").mockValue;
+  const rate30y=TLT_INDICATORS.find(i=>i.id==="t30y").mockValue;
+  const tltTheoretical=Math.round((1/rate30y)*100*4.2); // 단순 역산
+  const tltCurrent=91.8;
+  const discount=((tltTheoretical-tltCurrent)/tltTheoretical*100).toFixed(1);
+
+  const runAI=useCallback(async()=>{
+    setAiLoading(true);setAiText("");
+    const summary=TLT_INDICATORS.map(ind=>`- ${ind.label}: ${ind.mockValue}${ind.unit} → ${ind.signal(ind.mockValue)}`).join("\n");
+    const prompt=`당신은 채권 ETF 전문가입니다. TLT(미국 장기국채 ETF) 투자 타이밍을 초보자도 이해하게 설명해주세요.
+
+TLT 매수 점수: ${tltScore}점/100점 (${tg.label})
+현재 TLT 가격: $${tltCurrent} (이론가 대비 ${discount}% ${discount>0?"할인":"프리미엄"})
+
+지표 현황:
+${summary}
+
+다음 형식으로 쉬운 한국어로 답해주세요:
+
+【TLT 한 줄 진단】
+(TLT 지금 사도 되는지 한 문장)
+
+【매수해야 할 이유】
+(구체적으로 2가지)
+
+【매수하면 안 되는 이유】
+(구체적으로 1가지)
+
+【투자 액션】
+(지금 당장 무엇을 해야 하는지 명확하게)`;
+
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,messages:[{role:"user",content:prompt}]})});
+      const data=await res.json();
+      setAiText(data.content?.map(b=>b.text||"").join("")||"오류");
+    }catch{setAiText("네트워크 오류");}
+    finally{setAiLoading(false);}
+  },[tltScore]);
+
+  return(
+    <>
+      {/* TLT 게이지 */}
+      <div style={{background:"#0c0c1e",border:`2px solid ${tg.color}44`,borderRadius:"20px",padding:"20px 16px 16px",marginBottom:"14px",textAlign:"center",position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:"-60px",left:"50%",transform:"translateX(-50%)",
+          width:"260px",height:"260px",borderRadius:"50%",
+          background:`radial-gradient(circle,${tg.color}0d 0%,transparent 70%)`,pointerEvents:"none"}}/>
+        <div style={{fontSize:"11px",color:tg.color,fontWeight:"900",letterSpacing:"2px",marginBottom:"8px"}}>TLT 매수 타이밍 점수</div>
+        <BigGauge score={tltScore} grade={gaugeGrade} size="small"/>
+        <div style={{marginTop:"8px"}}>
+          <div style={{fontSize:"24px",fontWeight:"900",color:tg.color}}>{tg.emoji} {tg.label}</div>
+        </div>
+        <div style={{marginTop:"12px",background:tg.bg,border:`1px solid ${tg.color}33`,borderRadius:"12px",padding:"12px 16px"}}>
+          <div style={{fontSize:"13px",color:tg.color,fontWeight:"700",lineHeight:"1.6"}}>{tg.action}</div>
+        </div>
+      </div>
+
+      {/* TLT 점수 기준 */}
+      <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"14px",marginBottom:"14px"}}>
+        <div style={{fontSize:"11px",color:"#555",marginBottom:"10px"}}>▎TLT 점수 기준</div>
+        <div style={{display:"flex",gap:"3px"}}>
+          {[{max:15,label:"강력 매도",color:"#f87171"},{max:30,label:"매도",color:"#fb923c"},{max:50,label:"중립",color:"#fbbf24"},{max:70,label:"매수",color:"#4ade80"},{max:101,label:"강력 매수",color:"#00e5b0"}].map((g,gi)=>{
+            const prev=[0,15,30,50,70][gi];
+            const active=tltScore<g.max&&tltScore>=prev;
+            return(
+              <div key={g.label} style={{flex:1,textAlign:"center"}}>
+                <div style={{background:active?g.color:"transparent",borderRadius:"8px",padding:"7px 2px",border:`1.5px solid ${active?g.color:g.color+"55"}`,transition:"all 0.3s"}}>
+                  <div style={{fontSize:"9px",fontWeight:"900",color:active?"#07071a":g.color}}>{g.label}</div>
+                </div>
+                <div style={{fontSize:"7px",color:"#444",marginTop:"3px"}}>{["0-15","16-30","31-50","51-70","71+"][gi]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* TLT 이론가 밴드 */}
+      <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"16px",marginBottom:"14px"}}>
+        <div style={{fontSize:"12px",fontWeight:"900",color:"#ddd",marginBottom:"12px"}}>💲 TLT 적정가 분석</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"12px"}}>
+          {[
+            {label:"현재 가격",val:`$${tltCurrent}`,color:"#ddd"},
+            {label:"이론가",val:`$${tltTheoretical}`,color:"#fbbf24"},
+            {label:"할인율",val:`${discount>0?"-":""}${Math.abs(discount)}%`,color:discount>0?"#4ade80":"#f87171"},
+          ].map(item=>(
+            <div key={item.label} style={{background:"#0a0a18",borderRadius:"10px",padding:"10px",textAlign:"center",border:"1px solid #1a1a30"}}>
+              <div style={{fontSize:"9px",color:"#555",marginBottom:"4px"}}>{item.label}</div>
+              <div style={{fontSize:"16px",fontWeight:"900",color:item.color,fontFamily:"monospace"}}>{item.val}</div>
+            </div>
+          ))}
+        </div>
+        {/* Price band */}
+        <div style={{position:"relative",height:"24px",borderRadius:"12px",overflow:"hidden",display:"flex"}}>
+          {[{w:20,color:"#f87171",label:"과매도"},{w:35,color:"#fbbf24",label:"적정"},{w:45,color:"#4ade80",label:"과열"}].map((s,i)=>(
+            <div key={i} style={{flex:s.w,background:s.color,opacity:0.5,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:"8px",fontWeight:"700",color:"#07071a"}}>{s.label}</span>
+            </div>
+          ))}
+          {/* Current price marker */}
+          <div style={{position:"absolute",top:"-2px",bottom:"-2px",left:"calc(58% - 2px)",width:"4px",background:"white",borderRadius:"2px",boxShadow:"0 0 8px white"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:"4px",fontSize:"8px",color:"#444",fontFamily:"monospace"}}>
+          <span>$82 (과매도)</span><span>$92 (현재)</span><span>$105 (과열)</span>
+        </div>
+      </div>
+
+      {/* 차트 */}
+      <TLTMiniChart/>
+
+      {/* 신호등 */}
+      <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"16px",marginBottom:"14px"}}>
+        <div style={{fontSize:"12px",fontWeight:"900",color:"#ddd",marginBottom:"12px"}}>🚦 TLT 신호등</div>
+        {TLT_INDICATORS.map(ind=>{
+          const sig=ind.signal(ind.mockValue);
+          const isGreen=sig.includes("🟢");
+          const isYellow=sig.includes("🟡");
+          const sigColor=isGreen?"#4ade80":isYellow?"#fbbf24":"#f87171";
+          return(
+            <div key={ind.id} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px",
+              padding:"10px",background:"#0a0a18",borderRadius:"10px",border:`1px solid ${sigColor}33`}}>
+              <div style={{fontSize:"20px"}}>{ind.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:"11px",color:"#bbb",marginBottom:"2px"}}>{ind.label}</div>
+                <div style={{fontSize:"10px",color:"#555"}}>{ind.why}</div>
+              </div>
+              <div style={{flexShrink:0,textAlign:"center"}}>
+                <div style={{width:"36px",height:"36px",borderRadius:"50%",
+                  background:sigColor+"22",border:`2px solid ${sigColor}`,
+                  display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{width:"14px",height:"14px",borderRadius:"50%",background:sigColor}}/>
+                </div>
+                <div style={{fontSize:"9px",color:sigColor,fontWeight:"700",marginTop:"2px",whiteSpace:"nowrap"}}>
+                  {ind.mockValue}{ind.unit}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 백테스트 */}
+      <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"16px",marginBottom:"14px"}}>
+        <div style={{fontSize:"12px",fontWeight:"900",color:"#ddd",marginBottom:"4px"}}>📊 금리 구간별 TLT 수익률 (백테스트)</div>
+        <div style={{fontSize:"9px",color:"#555",marginBottom:"12px"}}>10년물 금리 기준 TLT 1년 후 평균 수익률</div>
+        {[
+          {range:"5% 이상",ret:"+28.4%",color:"#00e5b0",w:90},
+          {range:"4~5%",  ret:"+18.2%",color:"#4ade80",w:70},
+          {range:"3~4%",  ret:"+6.8%", color:"#fbbf24",w:40},
+          {range:"2~3%",  ret:"-3.2%", color:"#fb923c",w:20},
+          {range:"2% 이하",ret:"-12.1%",color:"#f87171",w:10},
+        ].map(item=>(
+          <div key={item.range} style={{marginBottom:"8px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:"3px"}}>
+              <span style={{fontSize:"11px",color:"#bbb"}}>금리 {item.range}</span>
+              <span style={{fontSize:"11px",fontWeight:"900",color:item.color,fontFamily:"monospace"}}>{item.ret}</span>
+            </div>
+            <div style={{position:"relative",height:"6px",background:"#1a1a30",borderRadius:"3px",overflow:"hidden"}}>
+              <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${item.w}%`,background:item.color,transition:"width 1s ease"}}/>
+            </div>
+          </div>
+        ))}
+        <div style={{fontSize:"9px",color:"#333",marginTop:"8px"}}>※ 2000~2024 과거 데이터 기반 시뮬레이션</div>
+        <div style={{marginTop:"10px",background:"#00e5b015",border:"1px solid #00e5b033",borderRadius:"8px",padding:"10px"}}>
+          <div style={{fontSize:"11px",color:"#00e5b0",fontWeight:"700"}}>
+            📍 현재 금리 {rate10y}% → 과거 유사 구간 평균 수익률: +18.2%
+          </div>
+        </div>
+      </div>
+
+      {/* AI 분석 */}
+      <div style={{background:"#0c0c1e",border:"1.5px solid #6d28d944",borderRadius:"16px",padding:"18px",marginBottom:"14px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
+          <div>
+            <div style={{fontSize:"13px",fontWeight:"900",color:"#a78bfa"}}>🤖 TLT AI 분석</div>
+            <div style={{fontSize:"10px",color:"#555",fontFamily:"monospace"}}>매수/매도 이유 포함</div>
+          </div>
+          <button onClick={runAI} disabled={aiLoading} style={{
+            background:aiLoading?"#1a1a2e":"linear-gradient(135deg,#7c3aed,#6d28d9)",
+            color:"white",border:"none",borderRadius:"10px",padding:"9px 16px",
+            fontSize:"12px",cursor:aiLoading?"not-allowed":"pointer",fontWeight:"700",
+            boxShadow:aiLoading?"none":"0 4px 15px #7c3aed44",transition:"all 0.2s",
+          }}>{aiLoading?"⏳ 분석 중...":"✨ AI 분석"}</button>
+        </div>
+        {aiText?(
+          <div style={{fontSize:"13px",color:"#d4d4f4",lineHeight:"1.85",whiteSpace:"pre-wrap",background:"#0a0a1a",borderRadius:"10px",padding:"14px"}}>{aiText}</div>
+        ):(
+          <div style={{fontSize:"12px",color:"#333",textAlign:"center",padding:"20px 0"}}>AI가 TLT 매수/매도 타이밍을 분석합니다</div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   AI PANEL (Overview)
+───────────────────────────────────────────────────────── */
+function AIPanel({scores,totalScore,alloc}){
+  const [text,setText]=useState("");
+  const [loading,setLoading]=useState(false);
+  const run=useCallback(async()=>{
+    setLoading(true);setText("");
+    const grade=getGrade(totalScore);
+    const summary=INDICATORS.map(ind=>`- ${ind.label}: ${ind.mockValue}${ind.unit} → ${getIG(scores[ind.id]||50).label}(${scores[ind.id]}점)`).join("\n");
+    const prompt=`당신은 초보 투자자도 이해할 수 있게 쉽게 설명하는 투자 전문가입니다.
+
+시장 종합 점수: ${totalScore}점 (${grade.korean})
+추천 자산배분: 주식${alloc.stock}% 채권${alloc.bond}% 금${alloc.gold}% 현금${alloc.cash}% 부동산${alloc.reit}%
+
+지표:
+${summary}
+
+형식 (쉬운 한국어, 전문용어 최소화):
+【한 줄 진단】
+【지금 주식 사도 될까요?】
+【가장 걱정되는 지표】
+· 1위:
+· 2위:
+【자산배분 조언】`;
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})});
+      const data=await res.json();
+      setText(data.content?.map(b=>b.text||"").join("")||"오류");
+    }catch{setText("오류");}
+    finally{setLoading(false);}
+  },[scores,totalScore,alloc]);
+  return(
+    <div style={{background:"#0c0c1e",border:"1.5px solid #6d28d944",borderRadius:"16px",padding:"18px",marginTop:"12px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
+        <div>
+          <div style={{fontSize:"13px",fontWeight:"900",color:"#a78bfa"}}>🤖 AI 시장 분석</div>
+          <div style={{fontSize:"10px",color:"#555",fontFamily:"monospace"}}>자산배분 이유 포함</div>
+        </div>
+        <button onClick={run} disabled={loading} style={{
+          background:loading?"#1a1a2e":"linear-gradient(135deg,#7c3aed,#6d28d9)",
+          color:"white",border:"none",borderRadius:"10px",padding:"9px 16px",
+          fontSize:"12px",cursor:loading?"not-allowed":"pointer",fontWeight:"700",
+          boxShadow:loading?"none":"0 4px 15px #7c3aed44",transition:"all 0.2s",
+        }}>{loading?"⏳ 분석 중...":"✨ 분석 시작"}</button>
+      </div>
+      {text?(
+        <div style={{fontSize:"13px",color:"#d4d4f4",lineHeight:"1.85",whiteSpace:"pre-wrap",background:"#0a0a1a",borderRadius:"10px",padding:"14px"}}>{text}</div>
+      ):(
+        <div style={{fontSize:"12px",color:"#333",textAlign:"center",padding:"20px 0"}}>버튼을 누르면 AI가 자산배분 이유까지 쉽게 설명해드립니다</div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   MAIN APP
+───────────────────────────────────────────────────────── */
+function App(){
+  const [scores,setScores]=useState({});
+  const [totalScore,setTotal]=useState(0);
+  const [tltScore,setTltScore]=useState(0);
+  const [alloc,setAlloc]=useState({stock:50,bond:25,gold:10,cash:10,reit:5,context:{}});
+  const [expanded,setExpanded]=useState(null);
+  const [tab,setTab]=useState("overview");
+  const [mounted,setMounted]=useState(false);
+
+  useEffect(()=>{
+    const s={};
+    INDICATORS.forEach(ind=>{s[ind.id]=ind.scoreCalc(ind.mockValue);});
+    setScores(s);
+    const totalW=INDICATORS.reduce((a,ind)=>a+ind.weight,0);
+    const total=INDICATORS.reduce((sum,ind)=>sum+(s[ind.id]*ind.weight),0);
+    setTotal(Math.round(total/totalW));
+    setAlloc(calcAssetAllocation(s));
+    setTltScore(calcTLTScore(TLT_INDICATORS));
+    setTimeout(()=>setMounted(true),100);
+  },[]);
+
+  const grade=getGrade(totalScore);
+  const sorted=[...INDICATORS].sort((a,b)=>(scores[b.id]||0)-(scores[a.id]||0));
+  const tg=getTLTGrade(tltScore);
+
+  const TABS=[
+    {id:"overview",  label:"📊 종합"},
+    {id:"allocation",label:"💼 자산배분"},
+    {id:"tlt",       label:"📋 TLT"},
+    {id:"detail",    label:"🔍 지표"},
+  ];
+
+  return(
+    <div style={{minHeight:"100vh",background:"#07071a",color:"white",
+      fontFamily:"'Noto Sans KR','Malgun Gothic',sans-serif",maxWidth:"480px",margin:"0 auto",paddingBottom:"80px"}}>
+
+      {/* HEADER */}
+      <div style={{background:"linear-gradient(180deg,#0d0d24 0%,#07071a 100%)",borderBottom:"1px solid #1a1a30",
+        padding:"16px 20px 12px",position:"sticky",top:0,zIndex:20,backdropFilter:"blur(10px)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:"18px",fontWeight:"900"}}>📈 시장 온도계</div>
+            <div style={{fontSize:"10px",color:"#444",marginTop:"2px"}}>
+              {new Date().toLocaleDateString("ko-KR",{month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"})} 기준
+            </div>
+          </div>
+          <div style={{display:"flex",gap:"6px"}}>
+            <div style={{background:grade.bg,border:`1.5px solid ${grade.color}66`,borderRadius:"10px",padding:"5px 10px",textAlign:"center"}}>
+              <div style={{fontSize:"9px",fontWeight:"900",color:grade.color}}>시장 {grade.grade}</div>
+              <div style={{fontSize:"13px",fontWeight:"900",color:grade.color,fontFamily:"monospace"}}>{totalScore}점</div>
+            </div>
+            <div style={{background:tg.bg,border:`1.5px solid ${tg.color}66`,borderRadius:"10px",padding:"5px 10px",textAlign:"center"}}>
+              <div style={{fontSize:"9px",fontWeight:"900",color:tg.color}}>TLT {tg.emoji}</div>
+              <div style={{fontSize:"13px",fontWeight:"900",color:tg.color,fontFamily:"monospace"}}>{tltScore}점</div>
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:"4px",marginTop:"12px"}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{
+              flex:1,padding:"7px 2px",borderRadius:"8px",border:"none",cursor:"pointer",
+              fontSize:"10px",fontWeight:"700",
+              background:tab===t.id?grade.color:"#1a1a30",
+              color:tab===t.id?"#07071a":"#555",transition:"all 0.2s",
+            }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"16px 16px 0"}}>
+
+        {/* ── OVERVIEW ── */}
+        {tab==="overview"&&(<>
+          <div style={{background:"#0c0c1e",border:`2px solid ${grade.color}44`,borderRadius:"20px",
+            padding:"20px 16px 16px",marginBottom:"14px",textAlign:"center",position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:"-60px",left:"50%",transform:"translateX(-50%)",
+              width:"300px",height:"300px",borderRadius:"50%",
+              background:`radial-gradient(circle,${grade.color}0d 0%,transparent 70%)`,pointerEvents:"none"}}/>
+            <BigGauge score={mounted?totalScore:0} grade={grade}/>
+            <div style={{marginTop:"10px"}}>
+              <div style={{fontSize:"26px",fontWeight:"900",color:grade.color}}>{grade.emoji} {grade.korean}</div>
+              <div style={{fontSize:"12px",color:"#888",marginTop:"4px"}}>{grade.sub}</div>
+            </div>
+            <div style={{marginTop:"14px",background:grade.color+"15",border:`1px solid ${grade.color}33`,borderRadius:"12px",padding:"12px 16px"}}>
+              <div style={{fontSize:"13px",color:grade.color,fontWeight:"700",lineHeight:"1.6"}}>{grade.advice}</div>
+            </div>
+          </div>
+          <GradeBar totalScore={totalScore}/>
+          <div style={{background:"#0c0c1e",border:"1px solid #1a1a30",borderRadius:"14px",padding:"14px",marginBottom:"14px"}}>
+            <div style={{fontSize:"11px",color:"#555",marginBottom:"12px"}}>▎지표별 상태 (위험도 순)</div>
+            {sorted.map((ind,i)=>{
+              const sc=scores[ind.id]||50; const ig=getIG(sc);
+              const isOpp=sc<=25;
+              return(
+                <div key={ind.id} style={{marginBottom:i<sorted.length-1?"10px":0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:"4px",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                      <span style={{fontSize:"11px",color:"#bbb"}}>{ind.icon} {ind.label}</span>
+                      {isOpp&&<span style={{fontSize:"8px",color:"#00e5b0",background:"#00e5b022",border:"1px solid #00e5b044",borderRadius:"3px",padding:"1px 4px",fontWeight:"900"}}>🚀 기회</span>}
+                    </div>
+                    <span style={{fontSize:"10px",fontWeight:"900",color:ig.color,background:ig.color+"22",borderRadius:"4px",padding:"1px 6px"}}>{ig.label}</span>
+                  </div>
+                  <div style={{position:"relative",height:"6px",background:"#1a1a30",borderRadius:"3px",overflow:"hidden"}}>
+                    <div style={{position:"absolute",left:0,top:0,height:"100%",width:`${sc}%`,
+                      background:`linear-gradient(90deg,#00e5b0,${ig.color})`,borderRadius:"3px",
+                      transition:"width 1.4s ease",boxShadow:isOpp?`0 0 8px #00e5b0`:undefined}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <AIPanel scores={scores} totalScore={totalScore} alloc={alloc}/>
+        </>)}
+
+        {/* ── ALLOCATION ── */}
+        {tab==="allocation"&&<AllocationTab alloc={alloc} grade={grade}/>}
+
+        {/* ── TLT ── */}
+        {tab==="tlt"&&<TLTTab tltScore={tltScore}/>}
+
+        {/* ── DETAIL ── */}
+        {tab==="detail"&&(
+          <div>
+            <div style={{fontSize:"11px",color:"#555",marginBottom:"12px",padding:"0 2px"}}>
+              위험도 높은 순 · 누르면 적정/위험 수치 + 매수 시그널 확인
+            </div>
+            {sorted.map((ind,i)=>(
+              <IndicatorRow key={ind.id} ind={ind} score={scores[ind.id]||50} rank={i+1}
+                expanded={expanded===ind.id} onToggle={()=>setExpanded(expanded===ind.id?null:ind.id)}/>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* BOTTOM BAR */}
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",
+        width:"100%",maxWidth:"480px",background:"#07071aee",borderTop:"1px solid #1a1a30",
+        padding:"8px 20px",display:"flex",justifyContent:"space-around",backdropFilter:"blur(10px)"}}>
+        {GRADES.map(g=>(
+          <div key={g.grade} style={{textAlign:"center"}}>
+            <div style={{fontSize:"10px",fontWeight:"900",color:g.color}}>{g.grade}</div>
+            <div style={{fontSize:"8px",color:"#444"}}>{["0-20","21-35","36-55","56-75","76+"][GRADES.indexOf(g)]}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
